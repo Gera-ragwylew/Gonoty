@@ -2,6 +2,7 @@ package main
 
 import (
 	"Gonoty/internal/handler"
+	"Gonoty/internal/repository"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -15,7 +16,13 @@ func main() {
 	r.Use(middleware.Logger)
 	r.Use(render.SetContentType(render.ContentTypeJSON))
 
-	taskHandler := handler.NewTaskHandler()
+	repo, err := repository.NewFileRepository("myrepo")
+	if err != nil {
+		return
+	}
+	defer repo.Close()
+
+	taskHandler := handler.NewTaskHandler(repo)
 
 	// Регистрируем ОЧЕНЬ точные пути
 	r.Post("/send", taskHandler.SendEmail)
