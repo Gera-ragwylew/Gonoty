@@ -1,60 +1,93 @@
 package handler
 
 import (
-	"encoding/json"
+	"Gonoty/internal/handler/dto"
+	"Gonoty/internal/models"
+	"Gonoty/internal/repository"
+	"context"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/render"
+	"github.com/google/uuid"
 )
 
-type EmailRequest struct {
-	To      string `json:"to"`
-	Subject string `json:"subject"`
-	Body    string `json:"body"`
+type TaskHandler struct {
+	repo repository.TaskRepository
 }
 
-func SendEmailHandler(w http.ResponseWriter, r *http.Request) {
-	// if r.Method != http.MethodPost {
-	// 	http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-	// 	log.Printf("Method not allowed")
-	// 	return
-	// }
+func NewTaskHandler(repo repository.TaskRepository) *TaskHandler {
+	return &TaskHandler{
+		repo: repo,
+	}
+}
 
-	data := &EmailRequest{}
+func (h *TaskHandler) SendEmail(w http.ResponseWriter, r *http.Request) {
+	data := &dto.SendEmailRequest{}
 	if err := render.Bind(r, data); err != nil {
-		// http.Error(w, "Invalid JSON", http.StatusMethodNotAllowed)
-		// log.Printf("Invalid JSON")
+		render.Render(w, r, ErrInvalidRequest(err))
 		return
 	}
 
-	// if req.To == "" || req.Subject == "" || req.Body == "" {
-	// 	http.Error(w, "Missing required fields: to, subject, body", http.StatusBadRequest)
-	// 	log.Printf("Missing required fields: to, subject, body")
-	// 	return
-	// }
+	task, err := CreateSendTask(r.Context(), data)
+	if err != nil {
+		//render.Render(w, r, ErrInternalServerError())
+		return
+	}
 
-	// log.Println(req)
-	// err := service.SendEmail(req.To, req.Subject, req.Body)
-	// if err != nil {
-	//     // Логируем ошибку для себя
-	//     fmt.Printf("Failed to send email: %v\n", err)
-	//     // И отправляем клиенту общую ошибку
-	//     http.Error(w, "Failed to send email", http.StatusInternalServerError)
-	//     return
-	// }
+	err = h.repo.AddTask(task)
+	if err != nil {
+		log.Println(err)
+		return
+	}
 
-	// Отправляем успешный ответ
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{
-		"status":  "success",
-		"message": "Email sent successfully",
-	})
-
-	log.Printf("Email sent successfully")
+	render.Render(w, r, dto.NewSendEmailResponse(
+		"1",
+		"pending",
+		"Task accepted for processing",
+	))
 }
 
-func (e *EmailRequest) Bind(r *http.Request) error {
+type ErrResponse struct {
+	Err            error `json:"-"`
+	HTTPStatusCode int   `json:"-"`
+
+	StatusText string `json:"status"`
+	AppCode    int64  `json:"code,omitempty"`
+	ErrorText  string `json:"error,omitempty"`
+}
+
+func (e *ErrResponse) Render(w http.ResponseWriter, r *http.Request) error {
+	render.Status(r, e.HTTPStatusCode)
 	return nil
+}
+
+func ErrInvalidRequest(err error) render.Renderer {
+	return &ErrResponse{
+		Err:            err,
+		HTTPStatusCode: 400,
+		StatusText:     "Invalid request",
+		ErrorText:      err.Error(),
+	}
+}
+
+func CreateSendTask(ctx context.Context, req *dto.SendEmailRequest) (*models.Task, error) {
+	fromEmail := req.FromEmail
+	if fromEmail == "" {
+		fromEmail = "default@myapp.com" // get from config
+	}
+
+	task := &models.Task{
+		ID:         uuid.New().String(),
+		Recipients: req.Recipients,
+		Subject:    req.Subject,
+		Body:       req.Body,
+		FromEmail:  fromEmail,
+		Status:     models.StatusPending,
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+	}
+
+	return task, nil
 }
