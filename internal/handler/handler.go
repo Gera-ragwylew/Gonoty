@@ -3,7 +3,7 @@ package handler
 import (
 	"Gonoty/internal/handler/dto"
 	"Gonoty/internal/models"
-	"Gonoty/internal/repository"
+	"Gonoty/internal/storage"
 	"context"
 	"log"
 	"net/http"
@@ -14,16 +14,17 @@ import (
 )
 
 type TaskHandler struct {
-	repo repository.TaskRepository
+	storage storage.Storage
 }
 
-func NewTaskHandler(repo repository.TaskRepository) *TaskHandler {
+func NewTaskHandler(storage storage.Storage) *TaskHandler {
 	return &TaskHandler{
-		repo: repo,
+		storage: storage,
 	}
 }
 
 func (h *TaskHandler) SendEmail(w http.ResponseWriter, r *http.Request) {
+	ctx := context.Background()
 	data := &dto.SendEmailRequest{}
 	if err := render.Bind(r, data); err != nil {
 		render.Render(w, r, ErrInvalidRequest(err))
@@ -36,14 +37,14 @@ func (h *TaskHandler) SendEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = h.repo.AddTask(task)
+	err = h.storage.Add(ctx, task)
 	if err != nil {
 		log.Println(err)
 		return
 	}
 
 	render.Render(w, r, dto.NewSendEmailResponse(
-		"1",
+		task.ID,
 		"pending",
 		"Task accepted for processing",
 	))
@@ -72,13 +73,13 @@ func ErrInvalidRequest(err error) render.Renderer {
 	}
 }
 
-func CreateSendTask(ctx context.Context, req *dto.SendEmailRequest) (*models.Task, error) {
+func CreateSendTask(ctx context.Context, req *dto.SendEmailRequest) (models.Task, error) {
 	fromEmail := req.FromEmail
 	if fromEmail == "" {
 		fromEmail = "default@myapp.com" // get from config
 	}
 
-	task := &models.Task{
+	task := models.Task{
 		ID:         uuid.New().String(),
 		Recipients: req.Recipients,
 		Subject:    req.Subject,
