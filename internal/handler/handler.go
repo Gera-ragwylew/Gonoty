@@ -3,7 +3,7 @@ package handler
 import (
 	"Gonoty/internal/handler/dto"
 	"Gonoty/internal/models"
-	"Gonoty/internal/storage"
+	"Gonoty/internal/queue"
 	"context"
 	"log"
 	"net/http"
@@ -14,12 +14,12 @@ import (
 )
 
 type TaskHandler struct {
-	storage storage.Storage
+	q queue.Queue
 }
 
-func NewTaskHandler(storage storage.Storage) *TaskHandler {
+func NewTaskHandler(queue queue.Queue) *TaskHandler {
 	return &TaskHandler{
-		storage: storage,
+		q: queue,
 	}
 }
 
@@ -37,7 +37,7 @@ func (h *TaskHandler) SendEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = h.storage.Add(ctx, task)
+	err = h.q.Enqueue(ctx, task)
 	if err != nil {
 		log.Println(err)
 		return

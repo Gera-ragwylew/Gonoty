@@ -6,12 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 )
 
 type RedisStorage struct {
-	Client *redis.Client
+	client *redis.Client
 	queue  string
 }
 
@@ -21,11 +22,17 @@ type RedisConfig struct {
 	DB       int
 }
 
-func NewRedisStorage(conf RedisConfig) (*RedisStorage, error) {
+var config = RedisConfig{
+	Addr:     "localhost:6379",
+	Password: "",
+	DB:       0,
+}
+
+func NewRedisStorage() (*RedisStorage, error) {
 	client := redis.NewClient(&redis.Options{
-		Addr:     conf.Addr,
-		Password: conf.Password,
-		DB:       conf.DB,
+		Addr:     config.Addr,
+		Password: config.Password,
+		DB:       config.DB,
 	})
 
 	ctx := context.Background()
@@ -37,17 +44,17 @@ func NewRedisStorage(conf RedisConfig) (*RedisStorage, error) {
 
 	fmt.Println("Connected to Redis:", pong)
 	return &RedisStorage{
-		Client: client,
+		client: client,
 		queue:  "email_queue"}, nil
 }
 
-func (r *RedisStorage) Add(ctx context.Context, task models.Task) error {
+func (r *RedisStorage) Enqueue(ctx context.Context, task models.Task) error {
 	taskJSON, err := json.Marshal(task)
 	if err != nil {
 		return fmt.Errorf("marshal error: %v", err)
 	}
 
-	err = r.Client.LPush(ctx, r.queue, taskJSON).Err()
+	err = r.client.LPush(ctx, r.queue, taskJSON).Err()
 	if err != nil {
 		return fmt.Errorf("redis Lpush error: %v", err)
 	}
@@ -55,12 +62,26 @@ func (r *RedisStorage) Add(ctx context.Context, task models.Task) error {
 	return nil
 }
 
+func (r *RedisStorage) Dequeue(ctx context.Context) (models.Task, error) {
+	result, err := r.client.BRPop(context.Background(), 0, "email_queue").Result()
+	if err != nil {
+		log.Printf("Redis error: %v", err)
+		time.Sleep(5 * time.Second)
+	}
+
+	// 4. Парсинг задачи
+	var task models.Task
+	json.Unmarshal([]byte(result[1]), &task)
+
+	return task, nil
+}
+
 func (r *RedisStorage) List(ctx context.Context) error {
-	if err := r.Client.Ping(ctx).Err(); err != nil {
+	if err := r.client.Ping(ctx).Err(); err != nil {
 		return fmt.Errorf("List ping error: %v", err)
 	}
 
-	length, err := r.Client.LLen(ctx, r.queue).Result()
+	length, err := r.client.LLen(ctx, r.queue).Result()
 	if err != nil {
 		return fmt.Errorf("List len error: %v", err)
 	}
@@ -68,7 +89,7 @@ func (r *RedisStorage) List(ctx context.Context) error {
 	fmt.Printf("Queue length: %d\n", length)
 
 	if length > 0 {
-		items, err := r.Client.LRange(ctx, r.queue, 0, 4).Result()
+		items, err := r.client.LRange(ctx, r.queue, 0, 4).Result()
 		if err != nil {
 			log.Fatal("Error reading queue:", err)
 		}

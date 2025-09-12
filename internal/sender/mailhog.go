@@ -7,30 +7,34 @@ import (
 	"net/smtp"
 )
 
-type Sender struct {
-	Host      string
-	Port      int
-	FromEmail string
+type Sender interface {
+	Send() error
+}
+
+type SMTPSender struct {
+	host      string
+	port      int
+	fromEmail string
 	auth      smtp.Auth
 }
 
-type Config struct {
+type SMTPSenderConfig struct {
 	Host      string
 	Port      int
 	FromEmail string
 	Auth      smtp.Auth
 }
 
-func NewSender(conf Config) *Sender {
-	return &Sender{
-		Host:      conf.Host,
-		Port:      conf.Port,
-		FromEmail: conf.FromEmail,
+func NewSender(conf SMTPSenderConfig) *SMTPSender {
+	return &SMTPSender{
+		host:      conf.Host,
+		port:      conf.Port,
+		fromEmail: conf.FromEmail,
 		auth:      conf.Auth,
 	}
 }
 
-func (s *Sender) ProcessTasks(ctx context.Context, tasksChan <-chan []models.Task) {
+func (s *Sender) Send(ctx context.Context, tasksChan <-chan []models.Task) {
 	for {
 		select {
 		case <-ctx.Done():
