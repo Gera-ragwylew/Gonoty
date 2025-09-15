@@ -1,39 +1,72 @@
 services:
-  app:
-    build: .  
-    container_name: gonoty_app
-    restart: unless-stopped
+  redis:
+    image: redis:7-alpine
+    container_name: service_redis
     ports:
-      - "8080:8080" 
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - gonoty_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: service_mailhog
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    networks:
+      - gonoty_network
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:8025"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+  api-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: service_api
+    ports:
+      - "8080:8080"
     environment:
-      - DB_HOST=postgres 
-      - DB_PORT=5432
-      - DB_USER=gonoty_user
-      - DB_PASSWORD=gonoty_pass
-      - DB_NAME=gonoty_db
+      - REDIS_URL=redis:6379
+      - MAILHOG_HOST=mailhog
+      - MAILHOG_PORT=1025
+      - SERVICE_NAME=api
     depends_on:
-      - postgres 
+      - redis
     networks:
       - gonoty_network
 
-  postgres:
-    image: postgres:15-alpine
-    container_name: gonoty_db
-    restart: unless-stopped
+  worker_service:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: service_worker
     environment:
-      POSTGRES_USER: gonoty_user
-      POSTGRES_PASSWORD: gonoty_pass
-      POSTGRES_DB: gonoty_db
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - REDIS_URL=redis:6379
+      - MAILHOG_HOST=mailhog
+      - MAILHOG_PORT=1025
+      - SERVICE_NAME=worker
+      - WORKER_COUNT=5
+    depends_on:
+      redis:
+        condition: service_healthy
+      mailhog:
+        condition: service_healthy
     networks:
       - gonoty_network
+    restart: "no"
 
 networks:
   gonoty_network:
     driver: bridge
 
 volumes:
-  postgres_data:
+  redis_data:

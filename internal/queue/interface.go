@@ -12,6 +12,7 @@ type Queue interface {
 	Enqueue(ctx context.Context, task models.Task) error
 	Dequeue(ctx context.Context) (models.Task, error)
 	// MarkAsDone(ctx context.Context, task models.Task) error
+	Close()
 }
 
 type Type string
@@ -23,10 +24,10 @@ const (
 	FileStorage Type = "file storage"
 )
 
-func New(name Type) (Queue, error) {
+func New(ctx context.Context, name Type) (Queue, error) {
 	switch name {
 	case Redis:
-		return redisstorage.NewRedisStorage()
+		return redisstorage.NewRedisStorage(ctx)
 	default:
 		return nil, fmt.Errorf("unsupported queue type: %s", name)
 	}

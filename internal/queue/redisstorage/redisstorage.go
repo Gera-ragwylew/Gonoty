@@ -28,14 +28,15 @@ var config = RedisConfig{
 	DB:       0,
 }
 
-func NewRedisStorage() (*RedisStorage, error) {
+func NewRedisStorage(pCtx context.Context) (*RedisStorage, error) {
+	ctx, cancel := context.WithTimeout(pCtx, time.Duration(5*time.Second))
+	defer cancel()
 	client := redis.NewClient(&redis.Options{
 		Addr:     config.Addr,
 		Password: config.Password,
 		DB:       config.DB,
 	})
 
-	ctx := context.Background()
 	pong, err := client.Ping(ctx).Result()
 	if err != nil {
 		log.Fatalf("Could not connect to Redis: %v", err)
@@ -118,4 +119,7 @@ func (r *RedisStorage) Delete(ctx context.Context, taskID string) error {
 	// }
 
 	return nil
+}
+
+func (r *RedisStorage) Close() {
 }
