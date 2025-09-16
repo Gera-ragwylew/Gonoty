@@ -35,7 +35,8 @@ services:
     ports:
       - "8080:8080"
     environment:
-      - REDIS_URL=redis:6379
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
       - MAILHOG_HOST=mailhog
       - MAILHOG_PORT=1025
       - SERVICE_NAME=api
@@ -53,7 +54,8 @@ services:
       dockerfile: Dockerfile.worker
     container_name: service_worker
     environment:
-      - REDIS_URL=redis:6379
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
       - MAILHOG_HOST=mailhog
       - MAILHOG_PORT=1025
       - SERVICE_NAME=worker
