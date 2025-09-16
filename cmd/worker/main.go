@@ -134,7 +134,7 @@ func sendEmail(ctx context.Context, task models.Task, recipient models.Recipient
 			task.Subject, recipient.Email, task.Body)
 
 		err := smtp.SendMail(
-			fmt.Sprintf("%s:%d", "localhost", 1025),
+			fmt.Sprintf("%s:%d", "mailhog", 1025),
 			nil,
 			task.FromEmail,
 			[]string{recipient.Email},
