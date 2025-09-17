@@ -8,7 +8,6 @@ import (
 	"log"
 	"os/signal"
 	"syscall"
-	"time"
 )
 
 func main() {
@@ -27,6 +26,5 @@ func main() {
 
 	<-ctx.Done()
 	log.Println("Shutting down...")
-	time.Sleep(time.Duration(time.Second * 2))
 	log.Println("Server stopped")
 }

@@ -16,12 +16,6 @@ import (
 	"github.com/go-chi/render"
 )
 
-// var redisConfig = redisstorage.RedisConfig{
-// 	Addr:     "localhost:6379",
-// 	Password: "",
-// 	DB:       0,
-// }
-
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

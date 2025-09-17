@@ -40,7 +40,9 @@ func (w *Worker) Start() {
 			return
 
 		default:
+			fmt.Println("default")
 			task, err := w.q.Dequeue(w.ctx)
+			fmt.Println("after dequeue")
 			if err != nil {
 				if errors.Is(err, context.Canceled) {
 					continue

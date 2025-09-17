@@ -23,7 +23,7 @@ type RedisConfig struct {
 }
 
 var config = RedisConfig{
-	Addr:     "redis:6379",
+	Addr:     "localhost:6379",
 	Password: "",
 	DB:       0,
 }
@@ -64,13 +64,13 @@ func (r *RedisStorage) Enqueue(ctx context.Context, task models.Task) error {
 }
 
 func (r *RedisStorage) Dequeue(ctx context.Context) (models.Task, error) {
-	result, err := r.client.BRPop(context.Background(), 0, "email_queue").Result()
+	result, err := r.client.BRPop(ctx, 0, "email_queue").Result()
 	if err != nil {
 		log.Printf("Redis error: %v", err)
-		time.Sleep(5 * time.Second)
+		return models.Task{}, err
+		// time.Sleep(5 * time.Second)
 	}
 
-	// 4. Парсинг задачи
 	var task models.Task
 	json.Unmarshal([]byte(result[1]), &task)
 
