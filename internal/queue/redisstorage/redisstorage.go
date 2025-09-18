@@ -28,25 +28,29 @@ var config = RedisConfig{
 	DB:       0,
 }
 
-func NewRedisStorage(pCtx context.Context) (*RedisStorage, error) {
-	ctx, cancel := context.WithTimeout(pCtx, time.Duration(5*time.Second))
-	defer cancel()
+func NewRedisStorage() *RedisStorage {
 	client := redis.NewClient(&redis.Options{
 		Addr:     config.Addr,
 		Password: config.Password,
 		DB:       config.DB,
 	})
 
-	pong, err := client.Ping(ctx).Result()
+	return &RedisStorage{
+		client: client,
+		queue:  "email_queue"}
+}
+
+func (r *RedisStorage) CheckStatus(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(5*time.Second))
+	defer cancel()
+
+	pong, err := r.client.Ping(ctx).Result()
 	if err != nil {
-		log.Fatalf("Could not connect to Redis: %v", err)
-		return nil, err
+		return fmt.Errorf("could not connect to Redis: %v", err)
 	}
 
 	fmt.Println("Connected to Redis:", pong)
-	return &RedisStorage{
-		client: client,
-		queue:  "email_queue"}, nil
+	return nil
 }
 
 func (r *RedisStorage) Enqueue(ctx context.Context, task models.Task) error {

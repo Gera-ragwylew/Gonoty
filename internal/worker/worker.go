@@ -17,54 +17,58 @@ const (
 )
 
 type Worker struct {
-	ctx     context.Context
 	q       queue.Queue
 	taskSem chan struct{}
-	wg      sync.WaitGroup
 }
 
-func New(ctx context.Context, queue queue.Queue) *Worker {
+func New(queue queue.Queue) *Worker {
 	return &Worker{
-		ctx:     ctx,
 		q:       queue,
 		taskSem: make(chan struct{}, maxConcurrentTasks),
 	}
 }
 
-func (w *Worker) Start() {
-	for {
-		select {
-		case <-w.ctx.Done():
-			w.wg.Wait()
-			fmt.Println("Task processor stopped")
-			return
+func (w *Worker) Start(ctx context.Context) error {
+	if err := w.q.CheckStatus(ctx); err != nil {
+		return fmt.Errorf("cannot start worker: %v", err)
+	}
 
-		default:
-			fmt.Println("default")
-			task, err := w.q.Dequeue(w.ctx)
-			fmt.Println("after dequeue")
-			if err != nil {
-				if errors.Is(err, context.Canceled) {
+	wg := &sync.WaitGroup{}
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				wg.Wait()
+				fmt.Println("Task processor stopped")
+				return
+
+			default:
+				task, err := w.q.Dequeue(ctx)
+				if err != nil {
+					if errors.Is(err, context.Canceled) {
+						continue
+					}
+					log.Printf("Dequeue error: %v", err)
+					time.Sleep(1 * time.Second)
 					continue
 				}
-				log.Printf("Dequeue error: %v", err)
-				time.Sleep(1 * time.Second)
-				continue
-			}
 
-			w.wg.Add(1)
-			go w.processTask(task)
+				wg.Add(1)
+				go w.processTask(ctx, wg, task)
+			}
 		}
-	}
+	}()
+
+	return nil
 }
 
-func (w *Worker) processTask(task models.Task) {
-	defer w.wg.Done()
+func (w *Worker) processTask(ctx context.Context, wg *sync.WaitGroup, task models.Task) {
+	defer wg.Done()
 
 	w.taskSem <- struct{}{}
 	defer func() { <-w.taskSem }()
 
-	taskCtx, cancel := context.WithTimeout(w.ctx, 5*time.Minute)
+	taskCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
 	results := make(chan error, len(task.Recipients))

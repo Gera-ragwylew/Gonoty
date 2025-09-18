@@ -21,8 +21,10 @@ func main() {
 	}
 	defer q.Close()
 
-	w := worker.New(ctx, q)
-	w.Start()
+	w := worker.New(q)
+	if err := w.Start(ctx); err != nil {
+		fmt.Println(err)
+	}
 
 	<-ctx.Done()
 	log.Println("Shutting down...")
