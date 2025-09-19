@@ -68,10 +68,15 @@ func (r *RedisStorage) Enqueue(ctx context.Context, task models.Task) error {
 }
 
 func (r *RedisStorage) Dequeue(ctx context.Context) (models.Task, error) {
-	result, err := r.client.BRPop(ctx, 0, "email_queue").Result()
+	result, err := r.client.BRPop(ctx, time.Second, "email_queue").Result()
 	if err != nil {
-		log.Printf("Redis error: %v", err)
-		return models.Task{}, err
+		if err == redis.Nil {
+			return models.Task{}, fmt.Errorf("queue empty: timeout")
+		} else {
+			return models.Task{}, fmt.Errorf("lost connection with redis")
+		}
+		// log.Printf("Redis error: %v", err)
+		// return models.Task{}, err
 		// time.Sleep(5 * time.Second)
 	}
 

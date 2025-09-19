@@ -27,6 +27,6 @@ func main() {
 	}
 
 	<-ctx.Done()
-	log.Println("Shutting down...")
+	w.Shoutdown()
 	log.Println("Server stopped")
 }
