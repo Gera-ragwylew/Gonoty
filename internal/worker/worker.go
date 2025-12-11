@@ -5,7 +5,10 @@ import (
 	"Gonoty/internal/queue"
 	"context"
 	"fmt"
+	"math/rand"
+	"mime"
 	"net/smtp"
+	"strings"
 	"sync"
 	"time"
 )
@@ -36,6 +39,16 @@ func (w *Worker) Shoutdown() {
 
 func (w *Worker) Start(ctx context.Context) error {
 	go func() {
+		c, err := smtp.Dial("localhost:1025")
+		if err != nil {
+			fmt.Println(err)
+		}
+		defer func() {
+			err = c.Quit()
+			if err != nil {
+				fmt.Println(err)
+			}
+		}()
 		defer func() {
 			close(w.closeDoneCh)
 		}()
@@ -55,8 +68,9 @@ func (w *Worker) Start(ctx context.Context) error {
 				fmt.Println(task.ID, "process...")
 				start := time.Now()
 				for _, r := range task.Recipients {
-					err := sendEmail(ctx, task, r)
-					fmt.Println(err)
+					if err := sendEmail(ctx, c, task, r); err != nil {
+						fmt.Println(err)
+					}
 				}
 
 				fmt.Println("task ", task.ID, "complete with", time.Since(start))
@@ -145,25 +159,79 @@ func (w *Worker) processTask(ctx context.Context, wg *sync.WaitGroup, task model
 	// }
 }
 
-func sendEmail(ctx context.Context, task models.Task, recipient models.Recipient) error {
+func sendEmail(ctx context.Context, c *smtp.Client, task models.Task, recipient models.Recipient) error {
 	// ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	// defer cancel()
 
 	// result := make(chan error, 1)
 
 	// go func() {
-	msg := fmt.Sprintf("Subject: %s\r\nTo: %s\r\n\r\n%s",
-		task.Subject, recipient.Email, task.Body)
 
-	err := smtp.SendMail(
-		fmt.Sprintf("%s:%d", "localhost", 1025),
-		nil,
-		task.FromEmail,
-		[]string{recipient.Email},
-		[]byte(msg),
-	)
+	boundary := fmt.Sprintf("boundary-%d", time.Now().UnixNano())
 
-	return err
+	var msg strings.Builder
+
+	// Headers
+	msg.WriteString(fmt.Sprintf("From: %s\r\n", task.FromEmail))
+	msg.WriteString(fmt.Sprintf("To: %s\r\n", recipient.Email))
+	msg.WriteString(fmt.Sprintf("Subject: %s\r\n", mime.QEncoding.Encode("UTF-8", task.Subject)))
+	msg.WriteString(fmt.Sprintf("Date: %s\r\n", time.Now().Format(time.RFC1123Z)))
+	msg.WriteString(fmt.Sprintf("Message-ID: <%s@myapp.com>\r\n",
+		fmt.Sprintf("%d.%d", time.Now().UnixNano(), rand.Int63())))
+	msg.WriteString("MIME-Version: 1.0\r\n")
+	msg.WriteString(fmt.Sprintf("Content-Type: multipart/alternative; boundary=\"%s\"\r\n", boundary))
+	msg.WriteString("\r\n")
+
+	// Plain text
+	msg.WriteString(fmt.Sprintf("--%s\r\n", boundary))
+	msg.WriteString("Content-Type: text/plain; charset=\"UTF-8\"\r\n")
+	msg.WriteString("Content-Transfer-Encoding: quoted-printable\r\n")
+	msg.WriteString("\r\n")
+	msg.WriteString(task.Body.Text)
+	msg.WriteString("\r\n")
+
+	// HTML
+	msg.WriteString(fmt.Sprintf("--%s\r\n", boundary))
+	msg.WriteString("Content-Type: text/html; charset=UTF-8\r\n")
+	msg.WriteString("Content-Transfer-Encoding: quoted-printable\r\n")
+	msg.WriteString("\r\n")
+	msg.WriteString(task.Body.HTML)
+	msg.WriteString("\r\n")
+
+	msg.WriteString(fmt.Sprintf("--%s--\r\n", boundary))
+
+	// err := smtp.SendMail(
+	// 	fmt.Sprintf("%s:%d", "localhost", 1025),
+	// 	nil,
+	// 	task.FromEmail,
+	// 	[]string{recipient.Email},
+	// 	[]byte(msg.String()),
+	// )
+
+	if err := c.Mail(task.FromEmail); err != nil {
+		return fmt.Errorf("MAIL FROM failed: %w", err)
+	}
+
+	if err := c.Rcpt(recipient.Email); err != nil {
+		return fmt.Errorf("RCPT TO failed: %w", err)
+	}
+
+	wc, err := c.Data()
+	if err != nil {
+		return fmt.Errorf("DATA failed: %w", err)
+	}
+
+	_, err = wc.Write([]byte(msg.String()))
+	if err != nil {
+		return fmt.Errorf("writing message failed: %w", err)
+	}
+
+	err = wc.Close()
+	if err != nil {
+		return fmt.Errorf("closing data failed: %w", err)
+	}
+
+	return nil
 	// result <- err
 	// }()
 
