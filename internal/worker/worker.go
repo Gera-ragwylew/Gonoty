@@ -44,17 +44,17 @@ func (w *Worker) Start(ctx context.Context) {
 			close(w.closeDoneCh)
 		}()
 
-		c, err := smtp.Dial("localhost:1025")
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
-		defer func() {
-			err = c.Quit()
-			if err != nil {
-				fmt.Println(err)
-			}
-		}()
+		// c, err := smtp.Dial("localhost:1025")
+		// if err != nil {
+		// 	fmt.Println(err)
+		// 	return
+		// }
+		// defer func() {
+		// 	err = c.Quit()
+		// 	if err != nil {
+		// 		fmt.Println(err)
+		// 	}
+		// }()
 
 		// // Включаем STARTTLS
 		// if ok, _ := c.Extension("STARTTLS"); ok {
@@ -65,18 +65,30 @@ func (w *Worker) Start(ctx context.Context) {
 		// 		return
 		// 	}
 		// }
-
+		isProcessing := false
+		var sumStart time.Time
+		pool := NewSMTPPool("localhost:1025", 20)
 		for {
 			select {
 			case <-w.closeCh:
 				return
 			default:
 				task, err := w.q.Dequeue(ctx)
-				if err != nil {
+				if err != nil || task.ID == "" {
+					if isProcessing {
+						isProcessing = false
+						fmt.Println("All tasks complete with", time.Since(sumStart))
+					}
 					fmt.Println(err)
 					// add try reconnet
 					time.Sleep(1 * time.Second)
 					continue
+				}
+
+				if task.ID != "" && !isProcessing {
+					isProcessing = true
+					fmt.Println("start sum timer...")
+					sumStart = time.Now()
 				}
 
 				fmt.Println(task.ID, "process...")
@@ -86,12 +98,27 @@ func (w *Worker) Start(ctx context.Context) {
 				// 	fmt.Println(err)
 				// }
 
+				wg := sync.WaitGroup{}
+				sem := make(chan struct{}, 10)
+
 				for _, r := range task.Recipients {
-					if err := sendEmail(ctx, c, task, r); err != nil {
-						fmt.Println(err)
-					}
+					wg.Add(1)
+					sem <- struct{}{}
+
+					go func(recipient models.Recipient) {
+						defer wg.Done()
+						defer func() { <-sem }()
+
+						c, _ := pool.Get()
+						defer pool.Put(c)
+
+						if err := sendEmail(ctx, c, task, r); err != nil {
+							fmt.Println(err)
+						}
+					}(r)
 				}
 
+				wg.Wait()
 				fmt.Println("task ", task.ID, "complete with", time.Since(start))
 			}
 		}
