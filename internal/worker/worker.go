@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/rand"
 	"mime"
+	"net"
 	"net/smtp"
 	"strings"
 	"sync"
@@ -37,11 +38,16 @@ func (w *Worker) Shoutdown() {
 	<-w.closeDoneCh
 }
 
-func (w *Worker) Start(ctx context.Context) error {
+func (w *Worker) Start(ctx context.Context) {
 	go func() {
+		defer func() {
+			close(w.closeDoneCh)
+		}()
+
 		c, err := smtp.Dial("localhost:1025")
 		if err != nil {
 			fmt.Println(err)
+			return
 		}
 		defer func() {
 			err = c.Quit()
@@ -49,9 +55,17 @@ func (w *Worker) Start(ctx context.Context) error {
 				fmt.Println(err)
 			}
 		}()
-		defer func() {
-			close(w.closeDoneCh)
-		}()
+
+		// // Включаем STARTTLS
+		// if ok, _ := c.Extension("STARTTLS"); ok {
+		// 	if err := c.StartTLS(&tls.Config{
+		// 		ServerName: "smtp.yandex.ru",
+		// 	}); err != nil {
+		// 		fmt.Println("STARTTLS failed: %w", err)
+		// 		return
+		// 	}
+		// }
+
 		for {
 			select {
 			case <-w.closeCh:
@@ -67,6 +81,11 @@ func (w *Worker) Start(ctx context.Context) error {
 
 				fmt.Println(task.ID, "process...")
 				start := time.Now()
+				// auth := smtp.PlainAuth("", "test@yandex.ru", "yandexpsw", "smtp.yandex.ru")
+				// if err := c.Auth(auth); err != nil {
+				// 	fmt.Println(err)
+				// }
+
 				for _, r := range task.Recipients {
 					if err := sendEmail(ctx, c, task, r); err != nil {
 						fmt.Println(err)
@@ -102,8 +121,6 @@ func (w *Worker) Start(ctx context.Context) error {
 	// 		}
 	// 	}
 	// }()
-
-	return nil
 }
 
 func (w *Worker) processTask(ctx context.Context, wg *sync.WaitGroup, task models.Task) {
@@ -167,9 +184,57 @@ func sendEmail(ctx context.Context, c *smtp.Client, task models.Task, recipient 
 
 	// go func() {
 
-	boundary := fmt.Sprintf("boundary-%d", time.Now().UnixNano())
+	// err := smtp.SendMail(
+	// 	fmt.Sprintf("%s:%d", "localhost", 1025),
+	// 	nil,
+	// 	task.FromEmail,
+	// 	[]string{recipient.Email},
+	// 	[]byte(msg.String()),
+	// )
+	msg := messageBuilder(task, recipient)
 
+	if err := c.Mail(task.FromEmail); err != nil {
+		return fmt.Errorf("MAIL FROM failed: %w", err)
+	}
+
+	if err := c.Rcpt(recipient.Email); err != nil {
+		return fmt.Errorf("RCPT TO failed: %w", err)
+	}
+
+	wc, err := c.Data()
+	if err != nil {
+		return fmt.Errorf("DATA failed: %w", err)
+	}
+
+	_, err = wc.Write(msg)
+	if err != nil {
+		return fmt.Errorf("writing message failed: %w", err)
+	}
+
+	err = wc.Close()
+	if err != nil {
+		return fmt.Errorf("closing data failed: %w", err)
+	}
+
+	return nil
+	// result <- err
+	// }()
+
+	// select {
+	// case <-ctx.Done():
+	// 	return fmt.Errorf("send timeout for %s", recipient.Email)
+	// case err := <-result:
+	// 	if err != nil {
+	// 		return fmt.Errorf("send to %s failed: %w", recipient.Email, err)
+	// 	}
+	// 	log.Printf("Email sent to %s", recipient.Email)
+	// 	return nil
+	// }
+}
+
+func messageBuilder(task models.Task, recipient models.Recipient) []byte {
 	var msg strings.Builder
+	boundary := fmt.Sprintf("boundary-%d", time.Now().UnixNano())
 
 	// Headers
 	msg.WriteString(fmt.Sprintf("From: %s\r\n", task.FromEmail))
@@ -200,49 +265,14 @@ func sendEmail(ctx context.Context, c *smtp.Client, task models.Task, recipient 
 
 	msg.WriteString(fmt.Sprintf("--%s--\r\n", boundary))
 
-	// err := smtp.SendMail(
-	// 	fmt.Sprintf("%s:%d", "localhost", 1025),
-	// 	nil,
-	// 	task.FromEmail,
-	// 	[]string{recipient.Email},
-	// 	[]byte(msg.String()),
-	// )
+	return []byte(msg.String())
+}
 
-	if err := c.Mail(task.FromEmail); err != nil {
-		return fmt.Errorf("MAIL FROM failed: %w", err)
-	}
-
-	if err := c.Rcpt(recipient.Email); err != nil {
-		return fmt.Errorf("RCPT TO failed: %w", err)
-	}
-
-	wc, err := c.Data()
+func lookupMX(domain string) ([]*net.MX, error) {
+	mxRecords, err := net.LookupMX(domain)
 	if err != nil {
-		return fmt.Errorf("DATA failed: %w", err)
+		return nil, fmt.Errorf("error looking up MX records: %w", err)
 	}
 
-	_, err = wc.Write([]byte(msg.String()))
-	if err != nil {
-		return fmt.Errorf("writing message failed: %w", err)
-	}
-
-	err = wc.Close()
-	if err != nil {
-		return fmt.Errorf("closing data failed: %w", err)
-	}
-
-	return nil
-	// result <- err
-	// }()
-
-	// select {
-	// case <-ctx.Done():
-	// 	return fmt.Errorf("send timeout for %s", recipient.Email)
-	// case err := <-result:
-	// 	if err != nil {
-	// 		return fmt.Errorf("send to %s failed: %w", recipient.Email, err)
-	// 	}
-	// 	log.Printf("Email sent to %s", recipient.Email)
-	// 	return nil
-	// }
+	return mxRecords, nil
 }

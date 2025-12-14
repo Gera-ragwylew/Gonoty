@@ -22,9 +22,7 @@ func main() {
 	defer q.Close()
 
 	w := worker.New(q)
-	if err := w.Start(ctx); err != nil {
-		fmt.Println(err)
-	}
+	w.Start(ctx)
 
 	<-ctx.Done()
 	w.Shoutdown()
