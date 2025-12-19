@@ -86,6 +86,36 @@ func (r *RedisStorage) Dequeue(ctx context.Context) (models.Task, error) {
 	return task, nil
 }
 
+func (r *RedisStorage) DequeueBatch(ctx context.Context, batchSize int) ([]models.Task, error) {
+	pipe := r.client.Pipeline()
+
+	lrange := pipe.LRange(ctx, "email_queue", 0, int64(batchSize-1))
+
+	ltrim := pipe.LTrim(ctx, "email_queue", int64(batchSize), -1)
+
+	_, err := pipe.Exec(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	items, err := lrange.Result()
+	if err != nil {
+		return nil, err
+	}
+
+	_, _ = ltrim.Result()
+
+	var tasks []models.Task
+	for _, item := range items {
+		var task models.Task
+		if err := json.Unmarshal([]byte(item), &task); err == nil {
+			tasks = append(tasks, task)
+		}
+	}
+
+	return tasks, nil
+}
+
 func (r *RedisStorage) List(ctx context.Context) error {
 	if err := r.client.Ping(ctx).Err(); err != nil {
 		return fmt.Errorf("List ping error: %v", err)

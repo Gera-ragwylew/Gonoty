@@ -11,6 +11,7 @@ import (
 	"net/smtp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -19,42 +20,50 @@ const (
 )
 
 type Worker struct {
-	q           queue.Queue
-	closeCh     chan struct{}
-	closeDoneCh chan struct{}
+	q               queue.Queue
+	targetInFlight  int
+	currentInFlight int32
+	minBatchSize    int
+	maxBatchSize    int
+	semaphore       chan struct{}
+	// closeCh     chan struct{}
+	// closeDoneCh chan struct{}
 }
 
 func New(queue queue.Queue) *Worker {
 	return &Worker{
-		q:           queue,
-		closeCh:     make(chan struct{}),
-		closeDoneCh: make(chan struct{}),
+		q:               queue,
+		targetInFlight:  5,
+		currentInFlight: 0,
+		minBatchSize:    1,
+		maxBatchSize:    5,
+		// closeCh:     make(chan struct{}),
+		// closeDoneCh: make(chan struct{}),
 	}
 }
 
-func (w *Worker) Shoutdown() {
-	close(w.closeCh)
-	fmt.Println("worker shoutdown...")
-	<-w.closeDoneCh
-}
+// func (w *Worker) Shoutdown() {
+// 	close(w.closeCh)
+// 	fmt.Println("worker shoutdown...")
+// 	<-w.closeDoneCh
+// }
+
+// func (w *Worker) processWithCleanup() {
+// 	defer func() {
+// 		<-w.semaphore
+// 		atomic.AddInt32(&w.currentInFlight, -1)
+// 	}()
+
+// 	w.processTask()
+// }
 
 func (w *Worker) Start(ctx context.Context) {
-	go func() {
-		defer func() {
-			close(w.closeDoneCh)
-		}()
+	w.semaphore = make(chan struct{}, w.targetInFlight)
 
-		// c, err := smtp.Dial("localhost:1025")
-		// if err != nil {
-		// 	fmt.Println(err)
-		// 	return
-		// }
-		// defer func() {
-		// 	err = c.Quit()
-		// 	if err != nil {
-		// 		fmt.Println(err)
-		// 	}
-		// }()
+	fmt.Println("start sum timer...")
+	sumStart := time.Now()
+
+	go func() {
 
 		// // Включаем STARTTLS
 		// if ok, _ := c.Extension("STARTTLS"); ok {
@@ -65,64 +74,82 @@ func (w *Worker) Start(ctx context.Context) {
 		// 		return
 		// 	}
 		// }
-		isProcessing := false
-		var sumStart time.Time
-		pool := NewSMTPPool("localhost:1025", 20)
+
+		// isProcessing := false
+		// var sumStart time.Time
+
 		for {
 			select {
-			case <-w.closeCh:
+			case <-ctx.Done():
 				return
 			default:
-				task, err := w.q.Dequeue(ctx)
-				if err != nil || task.ID == "" {
-					if isProcessing {
-						isProcessing = false
-						fmt.Println("All tasks complete with", time.Since(sumStart))
-					}
-					fmt.Println(err)
-					// add try reconnet
-					time.Sleep(100 * time.Millisecond)
-					continue
-				}
+				// task, err := w.q.Dequeue(ctx, 1)
+				// if err != nil || task.ID == "" {
+				// 	if isProcessing {
+				// 		isProcessing = false
+				// 		fmt.Println("All tasks complete with", time.Since(sumStart))
+				// 	}
+				// 	fmt.Println(err)
+				// 	// add try reconnet
+				// 	time.Sleep(100 * time.Millisecond)
+				// 	continue
+				// }
 
-				if task.ID != "" && !isProcessing {
-					isProcessing = true
-					fmt.Println("start sum timer...")
-					sumStart = time.Now()
-				}
+				// if task.ID != "" && !isProcessing {
+				// 	isProcessing = true
+				// 	fmt.Println("start sum timer...")
+				// 	sumStart = time.Now()
+				// }
 
-				fmt.Println(task.ID, "process...")
-				start := time.Now()
+				// fmt.Println(task.ID, "process...")
+				// start := time.Now()
+
 				// auth := smtp.PlainAuth("", "test@yandex.ru", "yandexpsw", "smtp.yandex.ru")
 				// if err := c.Auth(auth); err != nil {
 				// 	fmt.Println(err)
 				// }
 
-				wg := sync.WaitGroup{}
-				sem := make(chan struct{}, 10)
-
-				for _, r := range task.Recipients {
-					wg.Add(1)
-					sem <- struct{}{}
-
-					go func(recipient models.Recipient) {
-						defer wg.Done()
-						defer func() { <-sem }()
-
-						c, _ := pool.Get()
-						defer pool.Put(c)
-
-						if err := sendEmail(ctx, c, task, r); err != nil {
-							fmt.Println(err)
-						}
-					}(r)
+				freeSlots := w.targetInFlight - int(atomic.LoadInt32(&w.currentInFlight))
+				if freeSlots <= 0 {
+					time.Sleep(10 * time.Millisecond)
+					continue
 				}
 
-				wg.Wait()
-				fmt.Println("task ", task.ID, "complete with", time.Since(start))
+				batchSize := min(freeSlots*2, w.maxBatchSize)
+				batchSize = max(batchSize, w.minBatchSize)
+
+				tasks, err := w.q.DequeueBatch(ctx, batchSize)
+				if err != nil {
+					fmt.Println(err)
+					time.Sleep(100 * time.Millisecond)
+					continue
+				}
+
+				if len(tasks) == 0 {
+					time.Sleep(50 * time.Millisecond)
+					continue
+				}
+
+				for _, task := range tasks {
+					w.semaphore <- struct{}{}
+					atomic.AddInt32(&w.currentInFlight, 1)
+
+					go func() {
+						defer func() {
+							<-w.semaphore // Освобождаем слот
+							atomic.AddInt32(&w.currentInFlight, -1)
+						}()
+
+						w.processTask(ctx, task)
+					}()
+				}
 			}
 		}
 	}()
+
+	<-ctx.Done()
+
+	fmt.Println("all tasks complete in ", time.Since(sumStart))
 	// wg := &sync.WaitGroup{}
 	// go func() {
 	// 	for {
@@ -150,7 +177,47 @@ func (w *Worker) Start(ctx context.Context) {
 	// }()
 }
 
-func (w *Worker) processTask(ctx context.Context, wg *sync.WaitGroup, task models.Task) {
+func (w *Worker) processTask(ctx context.Context, task models.Task) {
+	wg := sync.WaitGroup{}
+	sem := make(chan struct{}, 10)
+
+	// c, err := smtp.Dial("localhost:1025")
+	// if err != nil {
+	// 	fmt.Println(err)
+	// 	return
+	// }
+	// defer func() {
+	// 	err = c.Quit()
+	// 	if err != nil {
+	// 		fmt.Println(err)
+	// 	}
+	// }()
+
+	fmt.Println(task.ID, "process...")
+	start := time.Now()
+
+	pool := NewSMTPPool("localhost:1025", 20)
+
+	for _, r := range task.Recipients {
+		wg.Add(1)
+		sem <- struct{}{}
+
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+
+			c, _ := pool.Get()
+			defer pool.Put(c)
+
+			if err := sendEmail(ctx, c, task, r); err != nil {
+				fmt.Println(err)
+			}
+		}()
+	}
+
+	wg.Wait()
+	fmt.Println("task ", task.ID, "complete with", time.Since(start))
+
 	// defer wg.Done()
 
 	// w.taskSem <- struct{}{}
@@ -207,17 +274,12 @@ func sendEmail(ctx context.Context, c *smtp.Client, task models.Task, recipient 
 	// ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	// defer cancel()
 
-	// result := make(chan error, 1)
+	// domain := strings.Split(recipient.Email, "@")[1]
+	// mxRecords, err := lookupMX(domain)
+	// if err != nil {
+	// 	return err
+	// }
 
-	// go func() {
-
-	// err := smtp.SendMail(
-	// 	fmt.Sprintf("%s:%d", "localhost", 1025),
-	// 	nil,
-	// 	task.FromEmail,
-	// 	[]string{recipient.Email},
-	// 	[]byte(msg.String()),
-	// )
 	msg := messageBuilder(task, recipient)
 
 	if err := c.Mail(task.FromEmail); err != nil {

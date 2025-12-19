@@ -25,6 +25,6 @@ func main() {
 	w.Start(ctx)
 
 	<-ctx.Done()
-	w.Shoutdown()
+	// w.Shoutdown()
 	log.Println("Server stopped")
 }

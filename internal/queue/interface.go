@@ -11,6 +11,7 @@ import (
 type Queue interface {
 	Enqueue(ctx context.Context, task models.Task) error
 	Dequeue(ctx context.Context) (models.Task, error)
+	DequeueBatch(ctx context.Context, batchSize int) ([]models.Task, error)
 	// MarkAsDone(ctx context.Context, task models.Task) error
 	CheckStatus(ctx context.Context) error
 	Close()
