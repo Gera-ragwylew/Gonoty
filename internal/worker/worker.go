@@ -37,6 +37,7 @@ func New(queue queue.Queue) *Worker {
 		currentInFlight: 0,
 		minBatchSize:    1,
 		maxBatchSize:    5,
+		semaphore:       make(chan struct{}, 5),
 		// closeCh:     make(chan struct{}),
 		// closeDoneCh: make(chan struct{}),
 	}
@@ -58,10 +59,6 @@ func New(queue queue.Queue) *Worker {
 // }
 
 func (w *Worker) Start(ctx context.Context) {
-	w.semaphore = make(chan struct{}, w.targetInFlight)
-
-	fmt.Println("start sum timer...")
-	sumStart := time.Now()
 
 	go func() {
 
@@ -130,26 +127,12 @@ func (w *Worker) Start(ctx context.Context) {
 					continue
 				}
 
-				for _, task := range tasks {
-					w.semaphore <- struct{}{}
-					atomic.AddInt32(&w.currentInFlight, 1)
-
-					go func() {
-						defer func() {
-							<-w.semaphore // Освобождаем слот
-							atomic.AddInt32(&w.currentInFlight, -1)
-						}()
-
-						w.processTask(ctx, task)
-					}()
-				}
+				w.processBatch(ctx, tasks)
 			}
 		}
 	}()
 
 	<-ctx.Done()
-
-	fmt.Println("all tasks complete in ", time.Since(sumStart))
 	// wg := &sync.WaitGroup{}
 	// go func() {
 	// 	for {
@@ -177,6 +160,22 @@ func (w *Worker) Start(ctx context.Context) {
 	// }()
 }
 
+func (w *Worker) processBatch(ctx context.Context, tasks []models.Task) {
+	for _, task := range tasks {
+		w.semaphore <- struct{}{}
+		atomic.AddInt32(&w.currentInFlight, 1)
+
+		go func() {
+			defer func() {
+				<-w.semaphore
+				atomic.AddInt32(&w.currentInFlight, -1)
+			}()
+
+			w.processTask(ctx, task)
+		}()
+	}
+}
+
 func (w *Worker) processTask(ctx context.Context, task models.Task) {
 	wg := sync.WaitGroup{}
 	sem := make(chan struct{}, 10)
@@ -196,7 +195,7 @@ func (w *Worker) processTask(ctx context.Context, task models.Task) {
 	fmt.Println(task.ID, "process...")
 	start := time.Now()
 
-	pool := NewSMTPPool("localhost:1025", 20)
+	pool := NewSMTPPool("localhost:1025", 10)
 
 	for _, r := range task.Recipients {
 		wg.Add(1)

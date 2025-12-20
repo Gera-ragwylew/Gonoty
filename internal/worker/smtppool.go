@@ -16,7 +16,6 @@ func NewSMTPPool(addr string, size int) *SMTPPool {
 		addr:        addr,
 	}
 
-	// Предварительно создаем соединения
 	for i := 0; i < size; i++ {
 		conn, err := smtp.Dial(addr)
 		if err == nil {
@@ -32,7 +31,6 @@ func (p *SMTPPool) Get() (*smtp.Client, error) {
 	case conn := <-p.connections:
 		return conn, nil
 	case <-time.After(5 * time.Second):
-		// Если пул пуст, создаем новое
 		return smtp.Dial(p.addr)
 	}
 }
@@ -40,9 +38,7 @@ func (p *SMTPPool) Get() (*smtp.Client, error) {
 func (p *SMTPPool) Put(conn *smtp.Client) {
 	select {
 	case p.connections <- conn:
-		// Вернули в пул
 	default:
-		// Пул полон - закрываем
 		conn.Close()
 	}
 }
