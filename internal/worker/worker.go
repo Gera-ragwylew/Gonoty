@@ -3,35 +3,17 @@ package worker
 import (
 	"Gonoty/internal/models"
 	"Gonoty/internal/queue"
-	"bufio"
 	"context"
 	"fmt"
 	"math/rand"
 	"mime"
 	"net"
 	"net/smtp"
-	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 )
-
-const (
-	defaultServerHost     = "localhost"
-	defaultServerPort     = "1010"
-	defaultMaxConnections = "20"
-	defaultMessagesPerSec = "100" // NB
-	ConfigFileName        = "worker.conf"
-)
-
-type Config struct {
-	ServerHost     string
-	ServerPort     string
-	MaxConnections string
-	MessagesPerSec string
-}
 
 type Worker struct {
 	q               queue.Queue
@@ -46,7 +28,7 @@ type Worker struct {
 func New(queue queue.Queue) *Worker {
 	return &Worker{
 		q:               queue,
-		config:          loadConfig(),
+		config:          NewConfig(),
 		targetInFlight:  5,
 		currentInFlight: 0,
 		minBatchSize:    1,
@@ -56,9 +38,11 @@ func New(queue queue.Queue) *Worker {
 }
 
 func (w *Worker) Start(ctx context.Context) {
+	if err := w.config.LoadFromFile(); err != nil {
+		fmt.Println("Config error: %w", err)
+	}
 
 	go func() {
-
 		// // Включаем STARTTLS
 		// if ok, _ := c.Extension("STARTTLS"); ok {
 		// 	if err := c.StartTLS(&tls.Config{
@@ -192,8 +176,7 @@ func (w *Worker) processTask(ctx context.Context, task models.Task) {
 	fmt.Println(task.ID, "process...")
 	start := time.Now()
 
-	maxCon, _ := strconv.Atoi(w.config.MaxConnections)
-	pool := NewSMTPPool(w.config.ServerHost+":"+w.config.ServerPort, maxCon)
+	pool := NewSMTPPool(w.config.Address, w.config.MaxConnections)
 
 	for _, r := range task.Recipients {
 		wg.Add(1)
@@ -361,97 +344,4 @@ func lookupMX(domain string) ([]*net.MX, error) {
 	}
 
 	return mxRecords, nil
-}
-
-func loadConfig() Config {
-	defaultConfig := Config{
-		ServerHost:     defaultServerHost,
-		ServerPort:     defaultServerPort,
-		MaxConnections: defaultMaxConnections,
-		MessagesPerSec: defaultMessagesPerSec,
-	}
-
-	file, err := os.Open(ConfigFileName)
-	if err != nil {
-		if os.IsNotExist(err) {
-			fmt.Println("Create default config file")
-			createDefaultConfig(defaultConfig)
-			return defaultConfig
-		}
-		fmt.Errorf("open config file error %w", err)
-		return defaultConfig
-	}
-	defer file.Close()
-
-	config := Config{}
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		if strings.HasPrefix(line, "#") || strings.TrimSpace(line) == "" {
-			continue
-		}
-
-		parts := strings.SplitN(line, "=", 2)
-		if len(parts) != 2 {
-			continue
-		}
-
-		key := strings.TrimSpace(parts[0])
-		value := strings.TrimSpace(parts[1])
-
-		switch key {
-		case "server_host":
-			config.ServerHost = value
-		case "server_port":
-			config.ServerPort = value
-		case "max_connections":
-			config.MaxConnections = value
-		case "messages_per_sec":
-			config.MessagesPerSec = value
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		fmt.Errorf("read config file error: %w", err)
-		return defaultConfig
-	}
-	return config
-}
-
-func createDefaultConfig(defaultConfig Config) {
-	file, err := os.Create(ConfigFileName)
-	if err != nil {
-		fmt.Errorf("ошибка создания файла конфигурации: %w", err)
-		return
-	}
-	defer file.Close()
-
-	writer := bufio.NewWriter(file)
-
-	configTemplate := `# Конфигурационный файл приложения
-
-# Хост сервера
-server_host=%s
-
-# Порт сервера
-server_port=%s
-
-# Максимальное количество подключений
-max_connections=%s
-`
-	_, err = fmt.Fprintf(writer, configTemplate,
-		defaultConfig.ServerHost,
-		defaultConfig.ServerPort,
-		defaultConfig.MaxConnections)
-
-	if err != nil {
-		fmt.Errorf("ошибка записи дефолтной конфигурации: %w", err)
-		return
-	}
-
-	writer.Flush()
-	fmt.Printf("Создан новый конфигурационный файл: %s\n", ConfigFileName)
-
-	return
 }
